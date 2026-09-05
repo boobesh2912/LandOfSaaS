@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-parchment text-land-900 font-body;
+  }
+  h1, h2, h3 {
+    font-family: theme("fontFamily.display");
+  }
+}
+
+@layer components {
+  .btn-liquid {
+    @apply inline-flex items-center gap-2 rounded-full bg-gold-500 px-6 py-3
+           font-display font-semibold text-land-900 shadow-liquid
+           transition-transform duration-150 ease-out
+           hover:-translate-y-0.5 active:translate-y-0.5 active:shadow-none;
+  }
+  .btn-liquid-outline {
+    @apply inline-flex items-center gap-2 rounded-full border-2 border-land-600 bg-white/70 px-5 py-2.5
+           font-display font-semibold text-land-700
+           transition-transform duration-150 ease-out
+           hover:-translate-y-0.5 hover:bg-white active:translate-y-0.5;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.animate-bob {
+  animation: bob 3.4s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+}
+.animate-sway {
+  transform-origin: bottom center;
+  animation: sway 4.5s ease-in-out infinite;
+}
+
+@keyframes flag-wave {
+  0%, 100% { transform: skewY(0deg); }
+  50% { transform: skewY(-4deg); }
+}
+.animate-flag {
+  transform-origin: left center;
+  animation: flag-wave 2.2s ease-in-out infinite;
+}

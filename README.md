@@ -2,6 +2,27 @@
 
 ---
 
+## 🚧 Phase 1 MVP — implemented
+
+The core loop described below (see → select → customize → pay → own) is
+built and running:
+
+- **`backend/`** — Python/FastAPI. Procedurally generates the world map
+  (Voronoi + curve-smoothing, no hand-tracing, no grid — see
+  `app/map_generator.py`), serves territories, and runs checkout +
+  ownership through [Dodo Payments](https://dodopayments.com).
+- **`frontend/`** — React/Vite/Tailwind. A playful, gamified map-first
+  storefront (trees, bushes, waving flags, liquid buttons) with the map
+  visible immediately below the header.
+
+Setup instructions live in `backend/README.md` and `frontend/README.md`,
+including the security model (webhook-verified ownership, server-side
+pricing, sanitized logo uploads, atomic claim-locking) and one item worth
+double-checking against a live Dodo test purchase before going to
+production.
+
+---
+
 # 1. Introduction — What This Product Actually Is
 
 LandOfSaaS is not just another SaaS directory, and it is not trying to compete with platforms like Product Hunt or BetaList in the traditional sense. Instead, it introduces a completely different paradigm where **visibility is no longer earned through algorithms or timing, but is directly owned through digital territory**.
