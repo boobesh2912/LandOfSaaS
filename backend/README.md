@@ -68,17 +68,32 @@ while you test.
   payment, so a mid-checkout browse can't leak a brand before it's paid
   for.
 
-## ⚠️ One thing to verify against your live Dodo dashboard
+## SDK version note
 
-I built the Dodo integration from their public docs and Python SDK source
-(this sandbox couldn't reach `docs.dodopayments.com` directly to double
-check field-by-field). The mechanics — `checkout_sessions.create(...)`
-with a `product_cart` item carrying an explicit `amount`, and
-`client.webhooks.unwrap()` for verification — are correct per the SDK.
-The one thing worth confirming with a real **test-mode** purchase before
-going live: that `metadata.territory_id` actually round-trips onto the
-`payment.succeeded` event's `data.metadata`. The webhook handler already
-has a fallback match by `dodo_checkout_session_id` in case it doesn't, and
-logs a clear error if neither matches (see `routers/webhooks.py`) — but
-run one real test purchase and watch the log before trusting it in
-production.
+Pin `dodopayments[webhooks]==1.115.0` (already set in `requirements.txt`).
+An earlier draft of this integration was written against a stale pinned
+version (1.7.0) that predates `checkout_sessions` and `webhooks.unwrap()`
+entirely — it would fail with `AttributeError` immediately. The current
+pin was verified directly against the installed SDK's source (not just
+docs): `checkout_sessions.create(product_cart=[{product_id, quantity,
+amount}], customer={email}, metadata, return_url)` returns
+`.checkout_url` / `.session_id`; `client.webhooks.unwrap(payload: str,
+headers=...)` needs the `[webhooks]` extra (`standardwebhooks` package)
+and a `webhook_key` (passed at client construction in `dodo_client.py`);
+and the `payment.succeeded` event's `.data` is a `Payment` object with
+real `.metadata` (plain dict), `.payment_id`, and `.checkout_session_id`
+fields — all exactly what `routers/webhooks.py` expects. No guesswork
+left in this path.
+
+## ⚠️ Sandboxed dev environments may block Dodo's API outright
+
+If checkout creation fails with `Could not start checkout with Dodo
+Payments`, check whether it's a network policy block before assuming a
+code bug: some sandboxed/cloud dev containers (including the one this was
+originally built in) run outbound traffic through an egress proxy that
+only allows a fixed set of hosts, and `test.dodopayments.com` /
+`live.dodopayments.com` may not be on it. That shows up as
+`dodopayments.APIConnectionError` under the hood. It's an environment
+setting, not an app bug — check your sandbox's network/egress policy (or
+just run the backend somewhere with normal internet access, e.g. your own
+machine or a real host like Railway/Fly) and it resolves itself.

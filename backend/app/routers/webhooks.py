@@ -41,7 +41,7 @@ async def dodo_webhook(
 
     try:
         event = client.webhooks.unwrap(
-            raw_body,
+            raw_body.decode("utf-8"),
             headers={
                 "webhook-id": webhook_id,
                 "webhook-signature": webhook_signature,
@@ -77,9 +77,7 @@ async def dodo_webhook(
     if territory is None:
         # Fallback: match by the checkout session id we stored when the session
         # was created, in case metadata didn't round-trip onto the payment object.
-        checkout_session_id = getattr(data, "checkout_session_id", None) or getattr(
-            data, "payment_link", None
-        )
+        checkout_session_id = getattr(data, "checkout_session_id", None)
         if checkout_session_id:
             territory = query.filter(
                 Territory.dodo_checkout_session_id == checkout_session_id
@@ -88,10 +86,10 @@ async def dodo_webhook(
     if territory is None:
         logger.error(
             "payment.succeeded (payment_id=%s) did not match any pending territory "
-            "(metadata territory_id=%r). Verify the metadata field name against a "
-            "live Dodo test payload and adjust this handler if it differs.",
+            "(metadata territory_id=%r, checkout_session_id=%r).",
             payment_id,
             territory_id,
+            getattr(data, "checkout_session_id", None),
         )
         raise HTTPException(status_code=404, detail="No matching pending territory for this payment")
 

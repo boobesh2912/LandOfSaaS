@@ -11,4 +11,5 @@ def get_dodo_client() -> DodoPayments:
     return DodoPayments(
         bearer_token=settings.dodo_payments_api_key,
         environment=settings.dodo_payments_environment,
+        webhook_key=settings.dodo_payments_webhook_key,
     )
