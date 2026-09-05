@@ -1,22 +1,15 @@
-"""Procedurally carves the world map into organic, connected territories.
+"""Carves the world map into five named continents, each holding a small
+cluster of connected, curved-border districts.
 
-Design goal (see project README, section 5 "Map System"): territories must
-read as real, hand-drawn geography -- connected, curved borders, no floating
-shapes, and explicitly NOT a grid. Hand-tracing that many districts is a
-multi-day illustration task. This script gets the same visual result from a
-30-second algorithm instead:
-
-  1. Scatter seed points across the canvas (rejection-sampled so no two
-     districts start too close together).
-  2. Mirror every seed across all four canvas edges, then run a Voronoi
-     diagram over seeds + mirrors. The mirrors make every real district's
-     cell bounded exactly at the canvas edge -- no clipping math needed, and
-     every cell shares a wall with its neighbors (no floating shapes).
-  3. Chaikin corner-cutting smooths the straight Voronoi edges into the soft,
-     natural curves real coastlines have, instead of a crystalline/blobby
-     look.
-  4. k-means over district centroids groups them into named regions (AI,
-     Dev, Marketing, ...), echoing the README's "different regions" idea.
+Earlier iterations of this generator scattered ~55 districts edge-to-edge
+across one big rectangle. It technically satisfied "no grid, no hand-tracing"
+but read as one dense mass of color rather than a legible world -- there was
+no ocean, no sense of place, nothing to label. This version fixes that by
+running the same proven algorithm (mirrored Voronoi + Chaikin smoothing --
+see the docstrings on the helpers below) once per continent, inside a small
+local box, then translating the result onto the continent's spot on the
+canvas. Between continents is open ocean; within a continent, districts
+still share walls and have smooth, non-grid, non-random-blob borders.
 
 Run with: python -m app.map_generator
 """
@@ -30,13 +23,20 @@ from app.database import Base, SessionLocal, engine
 from app.models import Territory
 from app.services.pricing import price_cents_for_area
 
-WIDTH, HEIGHT = 1000, 640
-NUM_DISTRICTS = 55
-MIN_SEED_SPACING = 55
+WIDTH, HEIGHT = 1200, 720
 CHAIKIN_ITERATIONS = 2
-KM2_PER_SQ_UNIT = 0.003  # tuned so districts land in the ~5-100 km2 range
+KM2_PER_SQ_UNIT = 0.0016  # tuned so districts land in a ~10-45 km2 spread
 
-REGIONS = ["AI", "Dev", "Marketing", "Design", "Growth", "Community"]
+# Each continent is a separate Voronoi cluster carved inside its own local
+# box (w, h) and then placed at (cx, cy) on the shared canvas. Districts per
+# continent varies a little so continents don't all feel identically sized.
+CONTINENTS = [
+    {"name": "AI Continent", "tagline": "Build Smarter", "cx": 290, "cy": 210, "w": 300, "h": 260, "n": 4},
+    {"name": "Developer Continent", "tagline": "Build Faster", "cx": 910, "cy": 210, "w": 300, "h": 260, "n": 4},
+    {"name": "Marketing Continent", "tagline": "Get Noticed", "cx": 230, "cy": 520, "w": 280, "h": 230, "n": 4},
+    {"name": "Creator Continent", "tagline": "Inspire More", "cx": 970, "cy": 520, "w": 280, "h": 230, "n": 4},
+    {"name": "Open Continent", "tagline": "For Everything Else", "cx": 600, "cy": 620, "w": 340, "h": 190, "n": 5},
+]
 
 NAME_PREFIXES = [
     "Fern", "Cedar", "Willow", "Moss", "Amber", "Copper", "Thorn", "Sage",
@@ -48,29 +48,32 @@ NAME_SUFFIXES = [
 ]
 
 
-def _sample_seed_points(rng: random.Random) -> np.ndarray:
-    margin = 20
+def _sample_seed_points(rng: random.Random, w: float, h: float, n: int) -> np.ndarray:
+    margin = min(w, h) * 0.12
+    min_spacing = 0.62 * ((w * h) / max(n, 1)) ** 0.5
     points: list[tuple[float, float]] = []
     attempts = 0
-    while len(points) < NUM_DISTRICTS and attempts < NUM_DISTRICTS * 400:
+    while len(points) < n and attempts < n * 800:
         attempts += 1
-        x = rng.uniform(margin, WIDTH - margin)
-        y = rng.uniform(margin, HEIGHT - margin)
-        if all((x - px) ** 2 + (y - py) ** 2 >= MIN_SEED_SPACING**2 for px, py in points):
+        x = rng.uniform(margin, w - margin)
+        y = rng.uniform(margin, h - margin)
+        if all((x - px) ** 2 + (y - py) ** 2 >= min_spacing**2 for px, py in points):
             points.append((x, y))
+    while len(points) < n:  # pathological case: just fill in, spacing be damned
+        points.append((rng.uniform(margin, w - margin), rng.uniform(margin, h - margin)))
     return np.array(points)
 
 
-def _mirror_points(points: np.ndarray) -> np.ndarray:
+def _mirror_points(points: np.ndarray, w: float, h: float) -> np.ndarray:
     left = np.column_stack([-points[:, 0], points[:, 1]])
-    right = np.column_stack([2 * WIDTH - points[:, 0], points[:, 1]])
+    right = np.column_stack([2 * w - points[:, 0], points[:, 1]])
     top = np.column_stack([points[:, 0], -points[:, 1]])
-    bottom = np.column_stack([points[:, 0], 2 * HEIGHT - points[:, 1]])
+    bottom = np.column_stack([points[:, 0], 2 * h - points[:, 1]])
     return np.vstack([points, left, right, top, bottom])
 
 
-def _clip_to_canvas(poly: np.ndarray) -> np.ndarray:
-    """Sutherland-Hodgman clip against the canvas rect, as a numerical-error safety net."""
+def _clip_to_box(poly: np.ndarray, w: float, h: float) -> np.ndarray:
+    """Sutherland-Hodgman clip against the local box, as a numerical-error safety net."""
 
     def clip_edge(points, inside_fn, intersect_fn):
         if len(points) == 0:
@@ -94,9 +97,9 @@ def _clip_to_canvas(poly: np.ndarray) -> np.ndarray:
         return p1 + t * (p2 - p1)
 
     poly = clip_edge(poly, lambda p: p[0] >= 0, lambda a, b: intersect(a, b, 0, 0))
-    poly = clip_edge(poly, lambda p: p[0] <= WIDTH, lambda a, b: intersect(a, b, 0, WIDTH))
+    poly = clip_edge(poly, lambda p: p[0] <= w, lambda a, b: intersect(a, b, 0, w))
     poly = clip_edge(poly, lambda p: p[1] >= 0, lambda a, b: intersect(a, b, 1, 0))
-    poly = clip_edge(poly, lambda p: p[1] <= HEIGHT, lambda a, b: intersect(a, b, 1, HEIGHT))
+    poly = clip_edge(poly, lambda p: p[1] <= h, lambda a, b: intersect(a, b, 1, h))
     return poly
 
 
@@ -128,64 +131,60 @@ def _to_svg_path(poly: np.ndarray) -> str:
     return "M " + " L ".join(pts) + " Z"
 
 
-def _kmeans_labels(centroids: np.ndarray, k: int, rng: random.Random, iterations: int = 25) -> np.ndarray:
-    n = len(centroids)
-    seed_idx = rng.sample(range(n), k)
-    means = centroids[seed_idx].copy()
-    labels = np.zeros(n, dtype=int)
-    for _ in range(iterations):
-        dists = np.linalg.norm(centroids[:, None, :] - means[None, :, :], axis=2)
-        labels = dists.argmin(axis=1)
-        for c in range(k):
-            members = centroids[labels == c]
-            if len(members):
-                means[c] = members.mean(axis=0)
-    return labels
-
-
-def generate_districts(seed: int = 42):
-    rng = random.Random(seed)
-    np.random.seed(seed)
-
-    seeds = _sample_seed_points(rng)
-    all_points = _mirror_points(seeds)
+def _carve_cluster(rng: random.Random, w: float, h: float, n: int) -> list[dict]:
+    """One continent's worth of districts, in the continent's own local (0,0)-(w,h) space."""
+    seeds = _sample_seed_points(rng, w, h, n)
+    all_points = _mirror_points(seeds, w, h)
     vor = Voronoi(all_points)
 
-    districts = []
+    cells = []
     for i in range(len(seeds)):
         region_idx = vor.point_region[i]
         vertex_idx = vor.regions[region_idx]
         if not vertex_idx or -1 in vertex_idx:
             continue  # degenerate cell (shouldn't happen thanks to mirroring); skip defensively
         poly = vor.vertices[vertex_idx]
-        poly = _clip_to_canvas(poly)
+        poly = _clip_to_box(poly, w, h)
         if len(poly) < 3:
             continue
         poly = _order_by_angle(poly)
         poly = _chaikin(poly, CHAIKIN_ITERATIONS)
         area_units = _shoelace_area(poly)
         centroid = poly.mean(axis=0)
-        districts.append(
-            {
-                "path_svg": _to_svg_path(poly),
-                "area_km2": round(area_units * KM2_PER_SQ_UNIT, 1),
-                "centroid_x": float(centroid[0]),
-                "centroid_y": float(centroid[1]),
-            }
-        )
+        cells.append({"poly": poly, "area_units": area_units, "centroid": centroid})
+    return cells
 
-    centroids = np.array([[d["centroid_x"], d["centroid_y"]] for d in districts])
-    labels = _kmeans_labels(centroids, k=len(REGIONS), rng=rng)
+
+def generate_districts(seed: int = 42) -> list[dict]:
+    rng = random.Random(seed)
+    np.random.seed(seed)
 
     used_names: set[str] = set()
-    for d, label in zip(districts, labels):
-        d["region"] = REGIONS[label]
-        while True:
-            name = f"{rng.choice(NAME_PREFIXES)} {rng.choice(NAME_SUFFIXES)}"
-            if name not in used_names:
-                used_names.add(name)
-                d["name"] = name
-                break
+    districts: list[dict] = []
+
+    for continent in CONTINENTS:
+        w, h = continent["w"], continent["h"]
+        offset_x, offset_y = continent["cx"] - w / 2, continent["cy"] - h / 2
+        for cell in _carve_cluster(rng, w, h, continent["n"]):
+            poly = cell["poly"] + np.array([offset_x, offset_y])
+            centroid = cell["centroid"] + np.array([offset_x, offset_y])
+
+            while True:
+                name = f"{rng.choice(NAME_PREFIXES)} {rng.choice(NAME_SUFFIXES)}"
+                if name not in used_names:
+                    used_names.add(name)
+                    break
+
+            districts.append(
+                {
+                    "name": name,
+                    "region": continent["name"],
+                    "path_svg": _to_svg_path(poly),
+                    "area_km2": round(cell["area_units"] * KM2_PER_SQ_UNIT, 1),
+                    "centroid_x": float(centroid[0]),
+                    "centroid_y": float(centroid[1]),
+                }
+            )
     return districts
 
 
@@ -214,7 +213,7 @@ def seed_database(force: bool = False) -> int:
             )
         db.commit()
         count = db.query(Territory).count()
-        print(f"Seeded {count} territories.")
+        print(f"Seeded {count} territories across {len(CONTINENTS)} continents.")
         return count
     finally:
         db.close()

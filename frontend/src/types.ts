@@ -24,11 +24,21 @@ export interface CheckoutResponse {
   hold_expires_at: string;
 }
 
-export const REGION_COLORS: Record<string, string> = {
-  AI: "#7dd3fc",
-  Dev: "#a3e635",
-  Marketing: "#fca5a5",
-  Design: "#c4b5fd",
-  Growth: "#fcd34d",
-  Community: "#5eead4",
+export interface ContinentInfo {
+  tagline: string;
+  fill: string;
+  glow: string;
+  icon: string;
+}
+
+export const CONTINENTS: Record<string, ContinentInfo> = {
+  "AI Continent": { tagline: "Build Smarter", fill: "#8fd6a2", glow: "#3fa34d", icon: "🧠" },
+  "Developer Continent": { tagline: "Build Faster", fill: "#93c5fd", glow: "#3b82f6", icon: "⌨️" },
+  "Marketing Continent": { tagline: "Get Noticed", fill: "#fcd48f", glow: "#e08e1d", icon: "📣" },
+  "Creator Continent": { tagline: "Inspire More", fill: "#f4a8b8", glow: "#e0577a", icon: "🎨" },
+  "Open Continent": { tagline: "For Everything Else", fill: "#c4b5fd", glow: "#8b5cf6", icon: "🌐" },
 };
+
+export const REGION_COLORS: Record<string, string> = Object.fromEntries(
+  Object.entries(CONTINENTS).map(([name, info]) => [name, info.fill])
+);
